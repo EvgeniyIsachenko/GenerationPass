@@ -1,117 +1,114 @@
-import secrets, string, pyperclip, threading, time, os, sys  # Импорт системных модулей
+import secrets, string, threading, time, os, sys
 
+# Проверка зависимости перед запуском
+try:
+    import pyperclip
+except ImportError:
+    print("\033[91m[!] Ошибка: Установите библиотеку pyperclip: pip install pyperclip\033[0m")
+    sys.exit(1)
 
 class Colors:
-    """Класс для хранения ANSI-кодов цветов терминала."""
     GREEN, YELLOW, RED, CYAN = '\033[92m', '\033[93m', '\033[91m', '\033[96m'
     BOLD, END = '\033[1m', '\033[0m'
 
-
 class SecureGenerator:
-    """Основной класс генератора паролей."""
-
-    def __init__(self, count=10, delay=20):
-        self.count = count  # Количество генерируемых паролей за раз
-        self.delay = delay  # Задержка перед очисткой буфера обмена
-        self.passwords_ba = []  # Список для хранения паролей в виде bytearray (для очистки памяти)
-        self.last_id = 0  # ID последней операции копирования для предотвращения Race Condition
-        self.forbidden = set('#"\'\\/|}[{~`lI1O0')  # Набор исключаемых символов (плохо читаемые)
-
-        # Предварительная подготовка наборов символов
+    def __init__(self, count=10, delay=20, pwd_length=22):
+        self.count = count
+        self.delay = delay
+        self.pwd_length = pwd_length
+        self.passwords_ba = []
+        self.last_timer = None # Для управления очередью очистки
+        self.forbidden = set('#"\'\\/|}[{~`lI1O0')
+        
         self.chars = {
             'up': [c for c in string.ascii_uppercase if c not in self.forbidden],
             'low': [c for c in string.ascii_lowercase if c not in self.forbidden],
             'dig': [c for c in string.digits if c not in self.forbidden],
             'sp': [c for c in string.punctuation if c not in self.forbidden]
         }
-        # Общий список всех разрешенных символов
-        self.all_allowed = self.chars['up'] + self.chars['low'] + self.chars['dig'] + self.chars['sp']
+        self.all_allowed = sum(self.chars.values(), [])
 
     def secure_zero(self):
-        """Метод физического затирания данных в оперативной памяти."""
         for ba in self.passwords_ba:
             if ba:
-                for i in range(len(ba)): ba[i] = 0  # Записываем нули в каждый байт массива
-        self.passwords_ba.clear()  # Очищаем сам список
+                for i in range(len(ba)): ba[i] = 0
+        self.passwords_ba.clear()
 
-    def generate_one(self, length=22):
-        """Создает один криптостойкий пароль."""
-        # Гарантируем наличие минимум одного символа из каждого набора
+    def generate_one(self):
+        # Гарантированный набор из 4 типов символов
         pwd = [secrets.choice(self.chars[k]) for k in self.chars]
-        # Добираем оставшуюся длину случайными символами
-        pwd += [secrets.choice(self.all_allowed) for _ in range(length - 4)]
-        secrets.SystemRandom().shuffle(pwd)  # Перемешиваем символы
+        pwd += [secrets.choice(self.all_allowed) for _ in range(self.pwd_length - 4)]
+        secrets.SystemRandom().shuffle(pwd)
 
-        specials = set(string.punctuation)  # Набор спецсимволов для проверки краев
-        for i in [0, -1]:  # Проверка первого и последнего символов
+        specials = set(string.punctuation)
+        for i in [0, -1]:
             if pwd[i] in specials:
-                for j in range(1, len(pwd) - 1):
+                for j in range(1, len(pwd)-1):
                     if pwd[j] not in specials:
-                        pwd[i], pwd[j] = pwd[j], pwd[i]  # Меняем местами, если на краю спецсимвол
+                        pwd[i], pwd[j] = pwd[j], pwd[i]
                         break
-        return bytearray("".join(pwd), 'ascii')  # Возвращаем bytearray (изменяемый массив байтов)
+        return bytearray("".join(pwd), 'ascii')
 
     def refresh(self):
-        """Обновляет текущий список паролей."""
-        self.secure_zero()  # Сначала затираем старые пароли
-        self.passwords_ba = [self.generate_one() for _ in range(self.count)]  # Генерируем новые
+        self.secure_zero()
+        self.passwords_ba = [self.generate_one() for _ in range(self.count)]
 
-    def clipboard_timer(self, p_str, c_id):
-        """Фоновый поток для очистки буфера обмена через заданное время."""
-        time.sleep(self.delay)  # Ждем указанное количество секунд
-        # Очищаем буфер только если это была последняя копия
-        if self.last_id == c_id and pyperclip.paste() == p_str:
-            pyperclip.copy("")  # Очищаем буфер обмена
-            sys.stdout.write(f"\r\x1b[2K{Colors.RED}[!] Буфер очищен{Colors.END}\n{Colors.CYAN}>>> {Colors.END}")
-            sys.stdout.flush()
+    def clear_clipboard(self, p_str):
+        """Метод очистки, вызываемый таймером"""
+        try:
+            if pyperclip.paste() == p_str:
+                pyperclip.copy("")
+                # Использование сохранения/восстановления позиции курсора
+                sys.stdout.write(f"\033[s\r\033[K{Colors.RED}[!] Буфер очищен{Colors.END}\033[u")
+                sys.stdout.flush()
+        except: pass
 
     def exit_gracefully(self):
-        """Метод безопасного завершения работы скрипта."""
-        if sys.platform == 'darwin':  # Если запуск на macOS
-            os.system('echo "" | pbcopy')  # Очищаем буфер через системную команду pbcopy
+        if sys.platform == 'darwin':
+            os.system('echo "" | pbcopy')
             try:
-                import termios  # Импорт модуля для работы с терминалом Unix
-                termios.tcflush(sys.stdin, termios.TCIFLUSH)  # Сбрасываем очередь ввода (удаляем 'r')
-            except:
-                pass
-        self.secure_zero()  # Затираем пароли в ОЗУ перед выходом
+                import termios
+                termios.tcflush(sys.stdin, termios.TCIFLUSH)
+            except: pass
+        self.secure_zero()
         print(f"\r{Colors.RED}[!] Данные стерты. Выход.{Colors.END}")
-        os._exit(0)  # Мгновенный выход из процесса на уровне ОС
+        os._exit(0)
 
     def run(self):
-        """Основной цикл работы программы."""
         while True:
-            self.refresh()  # Генерируем пароли
-            os.system('clear' if os.name == 'posix' else 'cls')  # Чистим экран терминала
-            print(f"{Colors.BOLD}{Colors.CYAN}🔒 Secure Gen | Final 🔒{Colors.END}")
+            self.refresh()
+            os.system('clear' if os.name == 'posix' else 'cls')
+            print(f"{Colors.BOLD}{Colors.CYAN}🔒 Secure Gen 2026 | Длина: {self.pwd_length} 🔒{Colors.END}")
 
             for i, ba in enumerate(self.passwords_ba, 1):
-                # Декодируем байты в строку только для вывода на экран
                 print(f"{Colors.GREEN}{i:2d}.{Colors.END} {ba.decode('ascii')}")
 
-            print(
-                f"\n{Colors.YELLOW}[R]{Colors.END} Обновить | {Colors.YELLOW}[1-10]{Colors.END} Копировать | {Colors.YELLOW}[Enter]{Colors.END} Выход")
+            print(f"\n{Colors.YELLOW}[R]{Colors.END} Обновить | {Colors.YELLOW}[1-{self.count}]{Colors.END} Копировать | {Colors.YELLOW}[Enter]{Colors.END} Выход")
 
             while True:
                 try:
                     cmd = input(f"{Colors.CYAN}>>> {Colors.END}").strip().lower()
-                except:
-                    self.exit_gracefully()  # Выход при Ctrl+C
+                except: self.exit_gracefully()
 
-                if not cmd: self.exit_gracefully()  # Выход при пустом Enter
-                if cmd == 'r': break  # Переход к обновлению
+                if not cmd: self.exit_gracefully()
+                if cmd == 'r': break
 
                 if cmd.isdigit() and 1 <= int(cmd) <= self.count:
                     idx = int(cmd)
                     p_str = self.passwords_ba[idx - 1].decode('ascii')
-                    self.last_id += 1
+                    
+                    # Если был запущен прошлый таймер — отменяем его
+                    if self.last_timer: self.last_timer.cancel()
+                    
                     pyperclip.copy(p_str)
-                    # Стираем предыдущую строку ввода и пишем статус
-                    sys.stdout.write(f"\x1b[1A\x1b[2K{Colors.GREEN}✓ #{idx} скопирован{Colors.END}\n")
-                    threading.Thread(target=self.clipboard_timer, args=(p_str, self.last_id), daemon=True).start()
+                    sys.stdout.write(f"\033[1A\033[K{Colors.GREEN}✓ #{idx} в буфере ({self.delay}с){Colors.END}\n")
+                    
+                    # Запуск нового таймера
+                    self.last_timer = threading.Timer(self.delay, self.clear_clipboard, [p_str])
+                    self.last_timer.start()
                 else:
-                    sys.stdout.write(f"{Colors.RED}Ошибка!{Colors.END}\n")
-
+                    sys.stdout.write(f"{Colors.RED}Ошибка ввода!{Colors.END}\n")
 
 if __name__ == "__main__":
-    SecureGenerator().run()
+    # Теперь можно легко менять настройки при создании объекта
+    SecureGenerator(count=10, delay=20, pwd_length=24).run()
