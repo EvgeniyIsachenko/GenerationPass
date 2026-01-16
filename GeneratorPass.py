@@ -1,70 +1,57 @@
-import random
+import secrets  # Криптографически безопасный генератор
 import string
 import pyperclip
 
 def generate_custom_password():
-    """Генерация пароля из 22 символов (6 спец.симв., 8 букв, 8 цифр)
-    с гарантией, что пароль не начинается и не заканчивается спецсимволом"""
-
-    # Убираем нежелательные символы
-    forbidden_chars = ['#', '"', "'", '\\', '/', '|', '}', '{', '[', ']', '~', '`']
-    special_chars = [c for c in string.punctuation if c not in forbidden_chars]
-
-    # Генерируем компоненты пароля
-    uppercase = random.choices(string.ascii_uppercase, k=4)
-    lowercase = random.choices(string.ascii_lowercase, k=4)
-    digits = random.choices(string.digits.replace('0', ''), k=8)
-    symbols = random.choices(special_chars, k=6)
-
-    # Собираем и перемешиваем
-    password = uppercase + lowercase + digits + symbols
-    random.shuffle(password)
-
-    # Проверяем первый и последний символы
-    if password[0] in special_chars:
-        # Ищем букву или цифру для замены
-        for i, char in enumerate(password):
-            if char not in special_chars:
-                password[0], password[i] = password[i], password[0]
-                break
-
-    if password[-1] in special_chars:
-        # Ищем букву или цифру для замены
-        for i, char in enumerate(password):
-            if char not in special_chars:
-                password[-1], password[i] = password[i], password[-1]
-                break
-
-    return ''.join(password)
-
+    # Настройки
+    forbidden = set('#"\'\\/|}[{~`')
+    special_chars = "".join(c for c in string.punctuation if c not in forbidden)
+    
+    # 1. Формируем группы (используем secrets для безопасности)
+    letters = [secrets.choice(string.ascii_uppercase) for _ in range(4)] + \
+              [secrets.choice(string.ascii_lowercase) for _ in range(4)]
+    digits = [secrets.choice(string.digits.replace('0', '')) for _ in range(8)]
+    symbols = [secrets.choice(special_chars) for _ in range(6)]
+    
+    # Объединяем всё, кроме двух символов, которые точно пойдут на края
+    # Чтобы края были случайными, сначала перемешаем все буквы и цифры
+    pool_non_special = letters + digits
+    secrets.SystemRandom().shuffle(pool_non_special)
+    
+    # Забираем два гарантированных не-спецсимвола для краев
+    prefix = pool_non_special.pop()
+    suffix = pool_non_special.pop()
+    
+    # Остальное (14 не-спецсимволов + 6 спецсимволов) перемешиваем для середины
+    middle_part = pool_non_special + symbols
+    secrets.SystemRandom().shuffle(middle_part)
+    
+    # Собираем итоговую строку
+    return f"{prefix}{''.join(middle_part)}{suffix}"
 
 def main():
-    print("\n🔒 Генератор надёжных паролей 🔒")
-    print("Сгенерировано 10 паролей:")
-
-    passwords = [generate_custom_password() for _ in range(10)]
+    print("\n🔒 Генератор криптостойких паролей (v2026) 🔒")
+    COUNT = 10
+    passwords = [generate_custom_password() for _ in range(COUNT)]
 
     for i, pwd in enumerate(passwords, 1):
         print(f"{i:2d}. {pwd}")
 
     while True:
-        choice = input("\nВыберите номер пароля (1-10) или нажмите Enter для выхода: ").strip()
-
+        choice = input(f"\nВыбор (1-{COUNT}) или Enter для выхода: ").strip()
+        
         if not choice:
-            print("Выход...")
             break
 
-        try:
-            choice = int(choice)
-            if 1 <= choice <= 10:
-                selected = passwords[choice - 1]
+        if choice.isdigit():
+            idx = int(choice)
+            if 1 <= idx <= COUNT:
+                selected = passwords[idx - 1]
                 pyperclip.copy(selected)
-                print(f"✓ Скопировано: {selected}")
-            else:
-                print("Ошибка! Число должно быть от 1 до 10")
-        except ValueError:
-            print("Ошибка! Введите число от 1 до 10")
-
+                print(f"✓ Скопировано в буфер!")
+                continue
+        
+        print(f"Ошибка! Введите число от 1 до {COUNT}")
 
 if __name__ == "__main__":
     main()
