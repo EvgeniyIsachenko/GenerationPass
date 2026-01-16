@@ -30,7 +30,7 @@ def generate_custom_password():
     return f"{prefix}{''.join(middle_part)}{suffix}"
 
 def main():
-    print("\n🔒 Генератор криптостойких паролей (v2026) 🔒")
+    print("\n🔒 Генератор криптостойких паролей 🔒")
     COUNT = 10
     passwords = [generate_custom_password() for _ in range(COUNT)]
 
