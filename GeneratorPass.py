@@ -1,67 +1,52 @@
-import secrets, threading, sys, hashlib, pyperclip
+import secrets, threading, sys
+
+# Проверка наличия библиотеки pyperclip
+try:
+    import pyperclip
+except ImportError:
+    sys.exit("\033[91m[!] Ошибка: Библиотека 'pyperclip' не найдена.\n[i] Установите её командой: pip install pyperclip\033[0m")
 
 class SecureGenerator:
     def __init__(self, length=24, delay=20, count=10):
-        # Валидация входных параметров
         try:
-            self.length = max(8, min(int(length), 128))
-            self.delay = max(5, min(int(delay), 300))
-            self.count = max(1, min(int(count), 50))
-        except (ValueError, TypeError):
-            sys.exit("\033[91m[!] Ошибка: Параметры должны быть числами.\033[0m")
-
-        self.timer = None
-        self.pwds = []
-        self.hashes = {} 
-        self.masked = True
+            self.l, self.d, self.c = int(length), int(delay), int(count)
+        except: 
+            # Значения по умолчанию, если аргументы переданы неверно
+            self.l, self.d, self.c = 24, 20, 10
         
-        # Набор символов: исключены l, I, 1, O, 0 для исключения ошибок чтения
-        chars = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-        self.pool = chars + "!@$%^&*()-_=+[]{}<>?"
-        self.border = chars
+        self.timer, self.pwds, self.masked = None, [], True
+        self.chars = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+        self.pool = self.chars + "!@$%^&*()-_=+[]{}<>?"
 
     def _wipe(self):
-        """Физическое затирание данных в RAM и очистка хэшей"""
+        """Физическое затирание данных в RAM"""
         for b in self.pwds:
             with memoryview(b) as m: m[:] = b'\x00' * len(b)
         self.pwds.clear()
-        self.hashes.clear()
 
-    def _gen(self, idx):
-        """Генерация пароля и создание проверочного хэша для буфера"""
-        p = [secrets.choice(self.border)] + \
-            [secrets.choice(self.pool) for _ in range(self.length - 2)] + \
-            [secrets.choice(self.border)]
-        pwd_str = "".join(p)
-        # Хэш используется для подтверждения того, что в буфере всё еще наш пароль
-        self.hashes[idx] = hashlib.sha256(pwd_str.encode()).hexdigest()
-        return bytearray(pwd_str, 'ascii')
+    def _gen(self):
+        p = [secrets.choice(self.chars)] + \
+            [secrets.choice(self.pool) for _ in range(self.l - 2)] + \
+            [secrets.choice(self.chars)]
+        return bytearray("".join(p), 'ascii')
 
-    def _clear_clip(self, expected_hash):
-        """Очистка буфера только при совпадении хэша содержимого"""
-        try:
-            current_content = pyperclip.paste()
-            if hashlib.sha256(current_content.encode()).hexdigest() == expected_hash:
-                pyperclip.copy("")
-                sys.stdout.write(f"\r\033[K\033[91m[!] Буфер очищен\033[0m\n\033[96m>>> \033[0m")
-                sys.stdout.flush()
-        except: pass
+    def _clear(self, val):
+        if pyperclip.paste() == val:
+            pyperclip.copy("")
+            sys.stdout.write(f"\r\033[K\033[91m[!] Буфер очищен\033[0m\n\033[96m>>> \033[0m")
+            sys.stdout.flush()
 
     def _draw(self):
-        """Отрисовка интерфейса (ANSI-очистка экрана)"""
-        sys.stdout.write("\033[H\033[J") 
-        header = f"🔒 Secure Gen | T:{self.delay}s | Mask:{'ON' if self.masked else 'OFF'}"
-        print(f"\033[1;36m{header}\033[0m")
+        sys.stdout.write("\033[H\033[J")
+        print(f"\033[1;36m🔒 Secure 2026 | L:{self.l} D:{self.d}s | Mask:{'ON' if self.masked else 'OFF'}\033[0m")
         for i, p in enumerate(self.pwds, 1):
-            val = "•" * self.length if self.masked else p.decode()
-            print(f"\033[92m{i:2d}.\033[0m {val}")
-        print(f"\n\033[93m[1-{self.count}]\033[0m Копировать | \033[93m[V]\033[0m Маска | \033[93m[R]\033[0m Обновить | \033[93m[Enter]\033[0m Выход")
+            print(f"\033[92m{i:2d}.\033[0m {'•'*self.l if self.masked else p.decode()}")
+        print(f"\n\033[93m[1-{self.c}]\033[0m Копи | \033[93m[V]\033[0m Маска | \033[93m[R]\033[0m Обновить | \033[93m[Enter]\033[0m Выход")
 
     def run(self):
         try:
             while True:
-                if not self.pwds:
-                    self.pwds = [self._gen(i+1) for i in range(self.count)]
+                if not self.pwds: self.pwds = [self._gen() for _ in range(self.c)]
                 self._draw()
                 while True:
                     try:
@@ -71,32 +56,25 @@ class SecureGenerator:
                     if not cmd: self.exit()
                     if cmd == 'r': self._wipe(); break
                     if cmd == 'v': self.masked = not self.masked; self._draw(); continue
-                    
-                    if cmd.isdigit() and 1 <= (idx := int(cmd)) <= self.count:
-                        p_str = self.pwds[idx-1].decode()
-                        pyperclip.copy(p_str)
-                        # Сброс старого таймера перед запуском нового
+                    if cmd.isdigit() and 1 <= (idx := int(cmd)) <= self.c:
+                        s = self.pwds[idx-1].decode()
+                        pyperclip.copy(s)
                         if self.timer: self.timer.cancel()
-                        self.timer = threading.Timer(self.delay, self._clear_clip, [self.hashes[idx]])
+                        self.timer = threading.Timer(self.d, self._clear, [s])
                         self.timer.start()
-                        print(f"\033[1A\033[K\033[92m✓ #{idx} скопирован ({self.delay}s)\033[0m")
-                        continue
-                    print(f"\033[1A\033[K\033[91m[!] Ошибка ввода\033[0m")
+                        print(f"\033[1A\033[K\033[92m✓ #{idx} скопирован ({self.d}s)\033[0m")
         except KeyboardInterrupt: self.exit()
 
     def exit(self):
-        """Полная деструкция данных перед закрытием"""
         if self.timer: self.timer.cancel()
-        try: pyperclip.copy("") 
+        try: pyperclip.copy("")
         except: pass
         self._wipe()
-        sys.exit("\n\033[1;91m[!] Память очищена. Сессия закрыта.\033[0m")
+        sys.exit("\n\033[91m[!] Данные затерты. Сессия закрыта.\033[0m")
 
 if __name__ == "__main__":
-    # Запуск с поддержкой аргументов командной строки
-    a = sys.argv[1:]
-    SecureGenerator(
-        length=a[0] if len(a) > 0 else 24,
-        delay=a[1] if len(a) > 1 else 20,
-        count=a[2] if len(a) > 2 else 10
-    ).run()
+    # Обработка аргументов командной строки
+    args = sys.argv[1:]
+    # Распаковываем аргументы, если они есть, иначе используем значения по умолчанию
+    gen = SecureGenerator(*args[:3]) if args else SecureGenerator()
+    gen.run()
