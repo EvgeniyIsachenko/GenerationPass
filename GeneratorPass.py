@@ -1,26 +1,24 @@
-import secrets, threading, sys, time, pyperclip
+import secrets, threading, sys, time, pyperclip, argparse, gc
 
 class SecureGenerator:
     def __init__(self, length=24, delay=20, count=10):
-        try:
-            self.l, self.d, self.c = int(length), int(delay), int(count)
-        except: self.l, self.d, self.c = 24, 20, 10
-        
+        self.l, self.d, self.c = length, delay, count
         self.timer_lock = threading.Lock()
         self.pwds, self.masked = [], True
-        self.remaining = 0
-        self.active_val = ""
+        self.remaining = -1
+        self.active_val = None
         self.chars = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
         self.pool = self.chars + "!@$%^&*()-_=+[]{}<>?"
 
     def _wipe(self):
-        """Затирание данных в RAM"""
         for b in self.pwds:
-            with memoryview(b) as m: m[:] = b'\x00' * len(b)
+            if isinstance(b, bytearray):
+                for i in range(len(b)): b[i] = 0
         self.pwds.clear()
+        self.active_val = None
+        gc.collect()
 
     def _gen(self):
-        """Криптостойкая генерация"""
         p = [secrets.choice(self.chars)] + \
             [secrets.choice(self.pool) for _ in range(self.l - 2)] + \
             [secrets.choice(self.chars)]
@@ -32,34 +30,40 @@ class SecureGenerator:
         return "\033[1;31m"
 
     def _timer_thread(self):
-        """Независимый поток таймера"""
         while True:
             time.sleep(1)
             with self.timer_lock:
-                row = self.c + 3 
-                if self.remaining > 0:
-                    self.remaining -= 1
+                if self.remaining >= 0:
                     color = self._get_color(self.remaining)
                     if self.remaining > 0:
-                        sys.stdout.write(f"\033[s\033[{row};0H\033[K{color}⏱ ОЧИСТКА БУФЕРА: {self.remaining}с\033[0m\033[u")
+                        msg = f"{color}⏱ ОЧИСТКА БУФЕРА: {self.remaining}с\033[0m"
+                        self.remaining -= 1
                     else:
-                        if pyperclip.paste() == self.active_val:
-                            pyperclip.copy("")
-                        sys.stdout.write(f"\033[s\033[{row};0H\033[K\033[1;31m[!] БУФЕР ОБМЕНА ОЧИЩЕН\033[0m\033[u")
-                        self.active_val = ""
+                        msg = "\033[1;31m[!] БУФЕР ОБМЕНА ОЧИЩЕН\033[0m"
+                        try:
+                            if pyperclip.paste() == self.active_val:
+                                pyperclip.copy("")
+                        except: pass
+                        self.active_val = None
+                        self.remaining = -1
+                    
+                    sys.stdout.write(f"\033[s\033[6A\r\033[K{msg}\033[u")
                     sys.stdout.flush()
 
     def _draw(self):
-        """Отрисовка основного интерфейса"""
         sys.stdout.write("\033[H\033[J")
-        print(f"\033[1;36m🔒 Secure Gen | L:{self.l} D:{self.d}s | Mask:{'ON' if self.masked else 'OFF'}\033[0m")
+        print(f"\033[1;36m🔒 Secure Gen 2026 | L:{self.l} | D:{self.d}s | Mask:{'ON' if self.masked else 'OFF'}\033[0m\n")
         for i, p in enumerate(self.pwds, 1):
-            val = '•'*self.l if self.masked else p.decode('utf-8')
-            print(f"\033[92m{i:2d}.\033[0m {val}")
+            val = '•' * self.l if self.masked else p.decode('utf-8')
+            print(f"\033[1;32m{i:2d}.\033[0m {val}")
         
-        print("\n\n") # Зазор под таймер
-        print(f"\033[93m[1-{self.c}]\033[0m Копировать | \033[93m[V]\033[0m Маска | \033[93m[R]\033[0m Обновить | \033[93m[Enter]\033[0m Выход")
-        print("\n\n\033[96m>>> \033[0m", end="") # Две пустые строки: одна для отступа, одна для уведомления
+        print("\r")      # Строка ТАЙМЕРА
+        print("\n\r")    # Одна пустая строка зазора
+        # Теперь "Меню:" выводится обычным белым цветом (\033[0m)
+        print(f"\033[0mМеню:\033[0m")
+        print(f" \033[93m[1-{self.c}]\033[0m Копировать  \033[93m[V]\033[0m Маска  \033[93m[R]\033[0m Обновить  \033[93m[Enter]\033[0m Выход")
+        print("\n\r")    # Пустая строка для уведомления
+        print(f"\033[96m>>> \033[0m", end="")
         sys.stdout.flush()
 
     def run(self):
@@ -69,14 +73,13 @@ class SecureGenerator:
                 if not self.pwds: self.pwds = [self._gen() for _ in range(self.c)]
                 self._draw()
                 while True:
-                    cmd = input().strip().lower()
-                    if not cmd: self.exit()
-                    
-                    # Стираем ввод пользователя
+                    try: cmd = input().strip().lower()
+                    except EOFError: self.exit()
                     sys.stdout.write("\033[A\033[K")
                     
+                    if not cmd: self.exit()
                     if cmd == 'r': 
-                        with self.timer_lock: self.remaining = 0
+                        with self.timer_lock: self.remaining = -1
                         self._wipe(); break
                     if cmd == 'v': 
                         self.masked = not self.masked; self._draw(); continue
@@ -87,23 +90,24 @@ class SecureGenerator:
                         with self.timer_lock:
                             self.active_val = s
                             self.remaining = self.d
-                        # \033[2A поднимает на 2 строки: 
-                        # строка 1 (под меню) - пустая
-                        # строка 2 (над >>>) - уведомление
-                        sys.stdout.write(f"\r\033[1A\033[K\033[1;32m✓ Пароль #{idx} скопирован в буфер\033[0m\n\033[96m>>> \033[0m")
-                        sys.stdout.flush()
-                        continue
+                        msg = f"\033[1;32m✓ Пароль #{idx} в буфере\033[0m"
+                    else:
+                        msg = f"\033[1;31m❌ Ошибка: используйте команды из Меню\033[0m"
                     
-                    sys.stdout.write("\033[96m>>> \033[0m")
+                    sys.stdout.write(f"\033[s\033[1A\r\033[K{msg}\033[u\033[96m>>> \033[0m")
                     sys.stdout.flush()
-        except (KeyboardInterrupt, EOFError): self.exit()
+        except KeyboardInterrupt: self.exit()
 
     def exit(self):
-        with self.timer_lock: self.remaining = 0
+        self._wipe()
         try: pyperclip.copy("")
         except: pass
-        self._wipe()
         sys.exit("\n\033[1;91m[!] Сессия закрыта. RAM очищена.\033[0m")
 
 if __name__ == "__main__":
-    SecureGenerator(*sys.argv[1:4]).run()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-l", "--length", type=int, default=24)
+    parser.add_argument("-d", "--delay", type=int, default=20)
+    parser.add_argument("-c", "--count", type=int, default=10)
+    args = parser.parse_args()
+    SecureGenerator(args.length, args.delay, args.count).run()
