@@ -11,6 +11,7 @@ class SecureGenerator:
         self.pool = self.chars + "!@$%^&*()-_=+[]{}<>?"
 
     def _wipe(self):
+        """Затирание данных в RAM"""
         for b in self.pwds:
             if isinstance(b, bytearray):
                 for i in range(len(b)): b[i] = 0
@@ -19,6 +20,7 @@ class SecureGenerator:
         gc.collect()
 
     def _gen(self):
+        """Криптостойкая генерация"""
         p = [secrets.choice(self.chars)] + \
             [secrets.choice(self.pool) for _ in range(self.l - 2)] + \
             [secrets.choice(self.chars)]
@@ -30,6 +32,7 @@ class SecureGenerator:
         return "\033[1;31m"
 
     def _timer_thread(self):
+        """Поток мониторинга буфера обмена"""
         while True:
             time.sleep(1)
             with self.timer_lock:
@@ -47,22 +50,23 @@ class SecureGenerator:
                         self.active_val = None
                         self.remaining = -1
                     
+                    # Обновление строки таймера (подъем на 6 строк от ввода)
                     sys.stdout.write(f"\033[s\033[6A\r\033[K{msg}\033[u")
                     sys.stdout.flush()
 
     def _draw(self):
+        """Отрисовка интерфейса"""
         sys.stdout.write("\033[H\033[J")
         print(f"\033[1;36m🔒 Secure Gen 2026 | L:{self.l} | D:{self.d}s | Mask:{'ON' if self.masked else 'OFF'}\033[0m\n")
         for i, p in enumerate(self.pwds, 1):
             val = '•' * self.l if self.masked else p.decode('utf-8')
             print(f"\033[1;32m{i:2d}.\033[0m {val}")
         
-        print("\r")      # Строка ТАЙМЕРА
-        print("\n\r")    # Одна пустая строка зазора
-        # Теперь "Меню:" выводится обычным белым цветом (\033[0m)
+        print("\r")      # Место под таймер
+        print("\n\r")    # Зазор
         print(f"\033[0mМеню:\033[0m")
         print(f" \033[93m[1-{self.c}]\033[0m Копировать  \033[93m[V]\033[0m Маска  \033[93m[R]\033[0m Обновить  \033[93m[Enter]\033[0m Выход")
-        print("\n\r")    # Пустая строка для уведомления
+        print("\n\r")    # Место под уведомления
         print(f"\033[96m>>> \033[0m", end="")
         sys.stdout.flush()
 
@@ -99,9 +103,13 @@ class SecureGenerator:
         except KeyboardInterrupt: self.exit()
 
     def exit(self):
+        """Безопасный выход с очисткой экрана"""
         self._wipe()
         try: pyperclip.copy("")
         except: pass
+        # Полная очистка терминала перед выходом
+        sys.stdout.write("\033[H\033[J")
+        sys.stdout.flush()
         sys.exit("\n\033[1;91m[!] Сессия закрыта. RAM очищена.\033[0m")
 
 if __name__ == "__main__":
